@@ -1,0 +1,242 @@
+% ============================================================================
+%  Relatorio Tecnico - Trabalho 3 de Programacao Paralela (MPI divisao e conquista)
+%  Formato exigido:
+%    pag. 1  -> coluna DUPLA, margens 1cm, fonte 10, somente texto
+%    pag. 2  -> coluna SIMPLES: tabelas + graficos (anexo)
+%    pag. 3+ -> coluna SIMPLES: codigo fonte
+%  Compilar a partir de relatorio/ (usa ../resultados/ e ../ para os fontes):
+%    tectonic relatorio.tex    ou    pdflatex relatorio.tex
+%  \pend{...} marca em VERMELHO o que depende das medicoes no cluster.
+%  Antes de entregar: grep pend relatorio.tex deve voltar so a definicao.
+%  Os numeros saem de resultados/tabelas.txt (python3 analisar.py).
+% ============================================================================
+\documentclass[10pt,a4paper,twocolumn]{article}
+
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \usepackage[T1]{fontenc}
+\fi
+\usepackage[brazil]{babel}
+\usepackage[margin=1cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{catchfile}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{3pt}
+\setlength{\columnsep}{6mm}
+\pagestyle{empty}
+
+\newcommand{\pend}[1]{\textcolor{red}{\textbf{[#1]}}}
+
+% Inclui o grafico se ja existir; senao deixa um aviso no lugar.
+\newcommand{\grafico}[2][\linewidth]{\IfFileExists{../resultados/#2.pdf}%
+  {\includegraphics[width=#1]{../resultados/#2.pdf}}%
+  {\pend{falta \detokenize{#2}.pdf: rodar python3 graficos.py}}}
+
+% Linhas de tabela geradas por analisar.py (resultados/tab_*.tex), carregadas
+% em macros ANTES das tabelas: um \input direto dentro de um tabular quebra o
+% \bottomrule ("Misplaced \noalign").
+\newcommand{\carrega}[1]{\IfFileExists{../resultados/#1.tex}%
+  {\expandafter\CatchFileDef\csname #1\endcsname{../resultados/#1.tex}{}}{}}
+\carrega{tab_escala}\carrega{tab_2k}\carrega{tab_muitos}\carrega{tab_ht}\carrega{tab_carga}
+\newcommand{\linhas}[2]{\ifcsname #1\endcsname\csname #1\endcsname\else #2\fi}
+
+\lstdefinestyle{codigoC}{
+  language=C, basicstyle=\ttfamily\scriptsize, numbers=left,
+  numberstyle=\tiny\color{gray}, keywordstyle=\color{blue!70!black},
+  commentstyle=\itshape\color{green!40!black}, stringstyle=\color{red!60!black},
+  showstringspaces=false, breaklines=true, tabsize=4,
+  columns=fullflexible, lineskip=-1pt,
+  literate={á}{{\'a}}1 {ã}{{\~a}}1 {ç}{{\c{c}}}1 {ê}{{\^e}}1 {í}{{\'i}}1
+           {ó}{{\'o}}1 {ú}{{\'u}}1 {é}{{\'e}}1 {õ}{{\~o}}1 {à}{{\`a}}1
+           {×}{{$\times$}}1 {→}{{$\rightarrow$}}1 {−}{{$-$}}1,
+  morekeywords={MPI_Init,MPI_Send,MPI_Isend,MPI_Recv,MPI_Probe,MPI_Wait,
+                MPI_Get_count,MPI_Status,MPI_Request,MPI_Gather,MPI_Barrier,MPI_Wtime}
+}
+
+\begin{document}
+
+% ============================ CABECALHO =====================================
+\twocolumn[
+{\centering
+  {\large\bfseries Bubble Sort com MPI no Modelo Divisão e Conquista}\\[2pt]
+  {\small Trabalho 3 --- Programação Paralela --- Grupo 20 (conta LAD \texttt{cp32020})}\\[1pt]
+  {\small Gabriel Coelho \quad Gabriel Cherubini}\\[4pt]
+}]
+
+% ============================ TEXTO (pag. 1) =================================
+\section{Problema}
+Ordenar um vetor de $N$ inteiros com bubble sort (BS), um algoritmo
+quadrático, paralelizado em MPI pelo modelo \emph{divisão e conquista}: os
+processos formam uma árvore binária; cada nó decide se \emph{conquista}
+(ordena localmente, se o pedaço tem no máximo $\delta$ elementos) ou
+\emph{divide} (manda cada metade a um filho e depois intercala as metades
+ordenadas que voltam). O vetor inicial é o pior caso do BS
+($N, N{-}1, \dots, 1$), com $N \in \{10^4, 10^5, 10^6\}$; ao final a raiz
+confere que o resultado é exatamente $1, 2, \dots, N$.
+
+Como o BS custa $\Theta(n^2)$, dividir já reduz o \emph{trabalho total}: com
+$L$ folhas, cada uma ordena $N/L$ elementos e a soma cai para $N^2/L$. Por
+isso o speed-up pode passar de $p$ (superlinear) sem erro de medição --- o
+enunciado já mostra 74 min com 1 processo e 18 min com 3.
+
+\section{Implementação}
+Um único fonte (\texttt{bs.c}) gera o sequencial (\texttt{gcc}) e o paralelo
+(\texttt{mpicc -DPARALELO}), com duas árvores escolhidas por \texttt{-v}:
+
+\textbf{Árvore clássica} (pseudocódigo do enunciado). Numeração de heap:
+filhos de $r$ são $2r{+}1$ e $2r{+}2$, pai é $\lfloor (r{-}1)/2 \rfloor$. O
+filho descobre o tamanho com \texttt{MPI\_Probe} + \texttt{MPI\_Get\_count};
+envios e recepções são bloqueantes. Os nós internos só dividem e
+intercalam; apenas as folhas ordenam. Com $p = 2^k{-}1$ processos há
+$L=(p{+}1)/2$ folhas, e $\delta = \lceil N/L \rceil$ faz a árvore usar
+exatamente os $p$ processos. Um $\delta$ fixo que não casa com $p$ deixaria
+processos esperando para sempre por um vetor; por isso o programa simula a
+divisão antes de começar e aborta se a árvore não usar exatamente os ranks
+$0..p{-}1$.
+
+\textbf{Árvore do artigo} (Radenski, PDPTA'11). Cada processo fica com a
+metade inicial e envia a final, com \texttt{MPI\_Isend}, ao ajudante
+$r + 2^{\textit{nível}}$, seguindo a divisão até não haver mais ajudante;
+então ordena o que sobrou. Todos os processos, inclusive os internos,
+ordenam. Mantivemos o esquema de árvore do artigo, mas com o \emph{mesmo} BS,
+a mesma intercalação e a mesma entrada da clássica --- o código original
+usa mergesort, e compará-lo ao BS mediria o algoritmo, não o balanceamento.
+Com $p = 2^k$ todos os pedaços são iguais; com $p=2^k{-}1$ um rank fica com
+o dobro (4$\times$ o trabalho, pelo custo quadrático).
+
+\textbf{Correções no material dado.} O pseudocódigo envia \texttt{tam/2} a
+cada filho, perdendo um elemento quando o tamanho é ímpar (a direita agora
+leva \texttt{tam - tam/2}); a rotina de intercalação lia \texttt{vetor[tam]}
+(o teste de limite vinha depois da leitura) e não liberava o vetor auxiliar.
+
+\section{Metodologia}
+Atlântica, 2 nós exclusivos (\pend{modelo da CPU}, 8 núcleos físicos / 16
+hardware threads cada), \pend{versão gcc/Open MPI}, \texttt{-O2}. Ranks em
+\emph{round-robin} entre os nós. Tempo: na raiz, do \texttt{MPI\_Barrier}
+(depois de gerar o vetor) ao fim da última intercalação; no sequencial, só a
+chamada ao BS. Cada ponto é a mediana de 3 execuções; execuções acima de
+10 min (sequencial de $10^6$, $p \le 3$) rodam uma vez.
+$S = T_{seq}/T_p$ e $E = S/p$ contando \emph{todos} os processos; acima de
+32 processos (mais que as hardware threads) usamos $S/32$. Cada rank
+registra nível, pedaço recebido e ordenado e os tempos de BS, intercalação,
+envio e espera, coletados por \texttt{MPI\_Gather} fora da medição.
+
+\section{Speed-up e eficiência}
+\pend{Tabela 1 / Fig. 1: sequencial e S,E para p = 1, 3, 7, 15, 31. Comentar o
+superlinear (N²/L) e por que E cai de 15 para 31.}
+
+\section{Balanceamento nos níveis da árvore}
+\pend{Fig. 2 / Tabela 4: na clássica os níveis internos ficam quase 100\%
+esperando; só as folhas trabalham, então com p processos só (p+1)/2 núcleos
+ordenam. Comparar a ocupação por nível nas duas árvores.}
+
+\section{Ganho com HT}
+\pend{Tabela 3 / Fig. 4: 15→31 mistura dois efeitos (árvore com o dobro de
+folhas, trabalho total /2, e HT). O par 31 com HT × 31 só em núcleos físicos
+isola o HT: mesma árvore, mesmo trabalho.}
+
+\section{Mecanismos de balanceamento}
+\pend{Artigo × clássica com o mesmo p; artigo com 2\textasciicircum k
+(Tabela 2). Excesso de processos: os nós internos bloqueados liberam o
+núcleo para as folhas.}
+
+\section{Mais processos (63 a 1023)}
+\pend{Fig. 3 / Tabela 5: até onde o ganho quadrático compensa a comunicação
+e a disputa por CPU; diferença entre N pequeno e grande.}
+
+\section{Conclusão}
+\pend{3--4 frases.}
+
+% ============================ ANEXO (pag. 2) ================================
+\onecolumn
+\section*{Anexo A --- Tabelas e gráficos}
+{\small
+\begin{center}
+\textbf{Tabela 1.} Tempo (s), speed-up e eficiência por número de processos.\\[2pt]
+\begin{tabular}{rr rrr rrr}
+\toprule
+ & & \multicolumn{3}{c}{árvore clássica} & \multicolumn{3}{c}{árvore do artigo}\\
+$N$ & $p$ & tempo & $S$ & $E$ & tempo & $S$ & $E$\\
+\midrule
+\linhas{tab_escala}{\pend{rodar analisar.py} & & & & & & & \\}
+\bottomrule
+\end{tabular}
+
+\vspace{6pt}
+\begin{minipage}[t]{0.42\linewidth}\centering
+\textbf{Tabela 2.} Árvore do artigo com $2^k$ processos.\\[2pt]
+\begin{tabular}{rrrrr}
+\toprule
+$N$ & $p$ & tempo & $S$ & $E$\\
+\midrule
+\linhas{tab_2k}{\pend{pendente} & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.56\linewidth}\centering
+\textbf{Tabela 3.} HT: tempos (s) e ganhos.\\[2pt]
+\begin{tabular}{rl rrr rrr}
+\toprule
+$N$ & versão & $T_{15}$ & $T_{31}$ & 15$\to$31 & HT & físicos & ganho\\
+\midrule
+\linhas{tab_ht}{\pend{pendente} & & & & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}
+
+\vspace{6pt}
+\textbf{Tabela 4.} Carga média por nível ($p=15$ e $16$): pedaço recebido e
+ordenado, tempos (s) e ocupação (BS + intercalação sobre o tempo total).\\[2pt]
+\begin{tabular}{rlrrr rrrrr r}
+\toprule
+$N$ & versão & $p$ & nível & ranks & recebido & ordenado & BS & intercala & espera & ocup.\\
+\midrule
+\linhas{tab_carga}{\pend{pendente} & & & & & & & & & & \\}
+\bottomrule
+\end{tabular}
+
+\vspace{6pt}
+\textbf{Tabela 5.} Excesso de processos (eficiência sobre as 32 hardware threads).\\[2pt]
+\begin{tabular}{rr rrr rrr}
+\toprule
+ & & \multicolumn{3}{c}{árvore clássica} & \multicolumn{3}{c}{árvore do artigo}\\
+$N$ & $p$ & tempo & $S$ & $S/32$ & tempo & $S$ & $S/32$\\
+\midrule
+\linhas{tab_muitos}{\pend{pendente} & & & & & & & \\}
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\grafico[0.9\linewidth]{grafico_escala}\\[2pt]
+\textbf{Figura 1.} Speed-up e eficiência; a linha pontilhada é o ideal linear.
+
+\grafico[0.9\linewidth]{grafico_carga}\\[2pt]
+\textbf{Figura 2.} Ocupação de cada processo durante a ordenação.
+
+\grafico[0.9\linewidth]{grafico_muitos}\\[2pt]
+\textbf{Figura 3.} Speed-up com excesso de processos.
+
+\grafico[0.9\linewidth]{grafico_ht}\\[2pt]
+\textbf{Figura 4.} Ganho de 15 para 31 processos e ganho isolado do HT.
+\end{center}
+}
+
+% ============================ CODIGO (pag. 3+) ==============================
+\section*{Anexo B --- Código fonte}
+\subsection*{bs.c}
+\lstinputlisting[style=codigoC]{../bs.c}
+\subsection*{medir.sh e job.sh}
+\lstinputlisting[style=codigoC,language=bash]{../medir.sh}
+\lstinputlisting[style=codigoC,language=bash]{../job.sh}
+\subsection*{analisar.py}
+\lstinputlisting[style=codigoC,language=Python]{../analisar.py}
+\subsection*{graficos.py}
+\lstinputlisting[style=codigoC,language=Python]{../graficos.py}
+
+\end{document}

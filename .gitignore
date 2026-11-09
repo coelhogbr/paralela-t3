@@ -1,0 +1,17 @@
+# binarios
+bs_seq
+bs_mpi
+*.o
+
+# paginas salvas do Moodle (o texto esta em docs/enunciado.md) e o artigo
+*.html
+*_files/
+mergesort-pdpta11.pdf
+
+# saidas do Slurm e do LaTeX
+slurm-*.out
+resultados-teste/
+relatorio/*.aux
+relatorio/*.log
+relatorio/*.out
+__pycache__/
