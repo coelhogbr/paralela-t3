@@ -54,7 +54,7 @@
   literate={á}{{\'a}}1 {ã}{{\~a}}1 {ç}{{\c{c}}}1 {ê}{{\^e}}1 {í}{{\'i}}1
            {ó}{{\'o}}1 {ú}{{\'u}}1 {é}{{\'e}}1 {õ}{{\~o}}1 {à}{{\`a}}1
            {×}{{$\times$}}1 {→}{{$\rightarrow$}}1 {−}{{$-$}}1,
-  morekeywords={MPI_Init,MPI_Send,MPI_Isend,MPI_Recv,MPI_Probe,MPI_Wait,
+  morekeywords={MPI_Init,MPI_Send,MPI_Recv,MPI_Probe,
                 MPI_Get_count,MPI_Status,MPI_Request,MPI_Gather,MPI_Barrier,MPI_Wtime}
 }
 
@@ -100,14 +100,24 @@ divisão antes de começar e aborta se a árvore não usar exatamente os ranks
 $0..p{-}1$.
 
 \textbf{Árvore do artigo} (Radenski, PDPTA'11). Cada processo fica com a
-metade inicial e envia a final, com \texttt{MPI\_Isend}, ao ajudante
-$r + 2^{\textit{nível}}$, seguindo a divisão até não haver mais ajudante;
-então ordena o que sobrou. Todos os processos, inclusive os internos,
+metade inicial e envia a final ao ajudante $r + 2^{\textit{nível}}$,
+seguindo a divisão até não haver mais ajudante; então ordena o que sobrou. Todos os processos, inclusive os internos,
 ordenam. Mantivemos o esquema de árvore do artigo, mas com o \emph{mesmo} BS,
 a mesma intercalação e a mesma entrada da clássica --- o código original
 usa mergesort, e compará-lo ao BS mediria o algoritmo, não o balanceamento.
 Com $p = 2^k$ todos os pedaços são iguais; com $p=2^k{-}1$ um rank fica com
 o dobro (4$\times$ o trabalho, pelo custo quadrático).
+
+\textbf{Envio bloqueante, não \texttt{MPI\_Isend}.} O artigo envia a metade
+com \texttt{MPI\_Isend} e começa a ordenar a sua. Para mensagens grandes,
+porém, o Open MPI só transfere os dados quando o remetente volta a chamar o
+MPI, e o BS não faz nenhuma chamada: o ajudante só recebia sua metade depois
+que o remetente terminava de ordenar, e os dois ordenavam em série. No ensaio
+($N=20.000$, $p=2$) a árvore do artigo levou 0,202\,s, metade do sequencial
+(0,396\,s), quando dois BS de $N/2$ em paralelo levam $\approx$0,10\,s (como a
+clássica com $p=3$: 0,103\,s). Com \texttt{MPI\_Send} o ajudante, que já
+espera no \texttt{MPI\_Probe}, recebe os dados antes de o remetente começar a
+ordenar.
 
 \textbf{Correções no material dado.} O pseudocódigo envia \texttt{tam/2} a
 cada filho, perdendo um elemento quando o tamanho é ímpar (a direita agora

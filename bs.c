@@ -332,19 +332,20 @@ static void artigo_recursivo(int *vetor, int tam, int nivel, int my_rank, int np
     }
 
     int meio = tam / 2;
-    MPI_Request pedido;
     c->filhos += 1;
 
-    /* metade final ao ajudante, assincrono: ordeno a minha enquanto ela viaja */
+    /* Metade final ao ajudante. Envio BLOQUEANTE, diferente do MPI_Isend do
+     * artigo: para mensagens grandes o Open MPI so transfere os dados quando
+     * quem enviou volta a chamar o MPI, e o bubble sort nao chama nenhuma
+     * funcao MPI. Com Isend o ajudante so recebia a metade dele depois que
+     * este rank terminava de ordenar a sua (no ensaio com N=20000 e p=2:
+     * 0,202 s com Isend contra ~0,10 s esperados). O ajudante ja esta parado
+     * no MPI_Probe, entao o Send termina assim que os dados chegam. */
     t = MPI_Wtime();
-    MPI_Isend(&vetor[meio], tam - meio, MPI_INT, ajudante, TAG, MPI_COMM_WORLD, &pedido);
+    MPI_Send(&vetor[meio], tam - meio, MPI_INT, ajudante, TAG, MPI_COMM_WORLD);
     c->t_envio += MPI_Wtime() - t;
 
     artigo_recursivo(vetor, meio, nivel + 1, my_rank, np, c);
-
-    t = MPI_Wtime();
-    MPI_Wait(&pedido, MPI_STATUS_IGNORE);
-    c->t_envio += MPI_Wtime() - t;
 
     /* metade final ordenada de volta */
     t = MPI_Wtime();
