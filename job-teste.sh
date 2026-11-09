@@ -17,12 +17,15 @@
 #   sbatch job-teste.sh ; cat slurm-teste-*.out
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
+# 1023 processos em 2 nos = ~512 por no; o mpirun abre alguns descritores por
+# processo (saida de cada um) e o limite padrao de 1024 nao basta.
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 
 echo "===== 1. particao e limites"
 sinfo || true
 scontrol show partition 2>/dev/null | grep -E 'PartitionName|MaxTime|DefaultTime|MaxNodes' || true
 echo "nos: $SLURM_JOB_NODELIST"
-echo "ulimit -u (processos): $(ulimit -u)   ulimit -n (arquivos): $(ulimit -n)"
+echo "ulimit -u (processos): $(ulimit -u)   ulimit -n (arquivos): $(ulimit -n) (maximo $(ulimit -Hn))"
 LC_ALL=C lscpu | grep -E 'Model name|Socket|Core|Thread|^CPU\(s\)'
 mpirun --version 2>&1 | head -1
 

@@ -18,6 +18,9 @@
 # acompanhar:  squeue -u $USER ; tail -f slurm-*.out
 set -euo pipefail
 cd "$SLURM_SUBMIT_DIR"
+# 1023 processos em 2 nos = ~512 por no; o mpirun abre alguns descritores por
+# processo (saida de cada um) e o limite padrao de 1024 nao basta.
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
 N=${1:?uso: sbatch job.sh N}
 
 mkdir -p resultados
