@@ -42,7 +42,7 @@ mpirun --oversubscribe --map-by node --bind-to none -n 4 \
     taskset -c "$PRIMARIAS" sh -c 'echo "$(hostname): $(taskset -pc $$)"'
 
 echo "===== 4. 1023 processos"
-mpirun --oversubscribe --map-by node --bind-to none --mca mpi_yield_when_idle 1 \
+timeout 120 mpirun --oversubscribe --map-by node --bind-to none --mca mpi_yield_when_idle 1 \
     -n 1023 hostname | sort | uniq -c
 for v in arvore artigo; do
     timeout 300 mpirun --oversubscribe --map-by node --bind-to none \
