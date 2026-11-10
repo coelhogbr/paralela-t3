@@ -35,7 +35,7 @@
 \raggedbottom
 \makeatletter
 \renewcommand\section{\@startsection{section}{1}{0pt}%
-  {1.0ex plus .3ex minus .2ex}{0.4ex}{\normalsize\bfseries}}
+  {0.8ex plus .2ex minus .2ex}{0.3ex}{\normalsize\bfseries}}
 \makeatother
 
 \newcommand{\pend}[1]{\textcolor{red}{\textbf{[#1]}}}
@@ -78,19 +78,16 @@
 
 % ============================ TEXTO (pag. 1) =================================
 \section{Problema}
-Ordenar um vetor de $N$ inteiros com bubble sort (BS), um algoritmo
-quadrático, paralelizado em MPI pelo modelo \emph{divisão e conquista}: os
-processos formam uma árvore binária; cada nó decide se \emph{conquista}
-(ordena localmente, se o pedaço tem no máximo $\delta$ elementos) ou
-\emph{divide} (manda cada metade a um filho e depois intercala as metades
-ordenadas que voltam). O vetor inicial é o pior caso do BS
-($N, N{-}1, \dots, 1$), com $N \in \{10^4, 10^5, 10^6\}$; ao final a raiz
-confere que o resultado é exatamente $1, 2, \dots, N$.
+Ordenar $N$ inteiros com bubble sort (BS) em MPI por \emph{divisão e
+conquista}: numa árvore binária de processos, cada nó \emph{conquista}
+(ordena, se o pedaço tem até $\delta$ elementos) ou \emph{divide} (manda as
+metades aos filhos e intercala o que volta). Entrada: pior caso
+($N, \dots, 1$), $N \in \{10^4, 10^5, 10^6\}$; a raiz confere se o
+resultado é $1, \dots, N$.
 
-Como o BS custa $\Theta(n^2)$, dividir já reduz o \emph{trabalho total}: com
-$L$ folhas, cada uma ordena $N/L$ elementos e a soma cai para $N^2/L$. Por
-isso o speed-up pode passar de $p$ (superlinear) sem erro de medição --- o
-enunciado já mostra 74 min com 1 processo e 18 min com 3.
+Como o BS custa $\Theta(n^2)$, dividir reduz o \emph{trabalho total}: com
+$L$ folhas de $N/L$ elementos, a soma cai para $N^2/L$. Por isso o speed-up
+pode passar de $p$ (superlinear) sem erro de medição.
 
 \section{Implementação}
 Um único fonte (\texttt{bs.c}) gera o sequencial (\texttt{gcc}) e o paralelo
@@ -102,8 +99,8 @@ filho descobre o tamanho com \texttt{MPI\_Probe} + \texttt{MPI\_Get\_count};
 envios e recepções são bloqueantes. Os nós internos só dividem e
 intercalam; apenas as folhas ordenam. Com $p = 2^k{-}1$ processos há
 $L=(p{+}1)/2$ folhas, e $\delta = \lceil N/L \rceil$ faz a árvore usar
-exatamente os $p$ processos. Outro $\delta$ deixaria ranks esperando para
-sempre; o programa simula a divisão antes e aborta nesse caso.
+exatamente os $p$ processos (com outro $\delta$ o programa aborta, em vez de
+deixar ranks esperando para sempre).
 
 \textbf{Árvore do artigo} (Radenski, PDPTA'11). Cada processo fica com a
 metade inicial e envia a final ao ajudante $r + 2^{\textit{nível}}$,
@@ -114,16 +111,13 @@ Com $p = 2^k$ todos os pedaços são iguais; com $p=2^k{-}1$ um rank fica com
 o dobro (4$\times$ o trabalho, pelo custo quadrático).
 
 \textbf{Envio bloqueante, não \texttt{MPI\_Isend}.} O artigo envia a metade
-com \texttt{MPI\_Isend} e começa a ordenar a sua, mas o Open MPI só
-transfere mensagens grandes quando o remetente volta a chamar o MPI, e o BS
-não chama: os dois ordenavam em série. No ensaio ($N=20.000$, $p=2$) isso
-deu 0,202\,s, contra $\approx$0,10\,s de dois BS de $N/2$ em paralelo. Com
-\texttt{MPI\_Send} o ajudante, já no \texttt{MPI\_Probe}, recebe antes.
+com \texttt{MPI\_Isend}, mas o Open MPI só transfere mensagens grandes
+quando o remetente volta a chamar o MPI, e o BS não chama: os dois ordenavam
+em série (0,202\,s no ensaio com $p=2$, contra $\approx$0,10\,s esperados).
 
-\textbf{Correções no material dado.} O pseudocódigo envia \texttt{tam/2} a
-cada filho, perdendo um elemento quando o tamanho é ímpar (a direita agora
-leva \texttt{tam - tam/2}); a rotina de intercalação lia \texttt{vetor[tam]}
-(o teste de limite vinha depois da leitura) e não liberava o vetor auxiliar.
+\textbf{Correções no material dado.} O pseudocódigo perdia um elemento com
+tamanho ímpar (a direita agora leva \texttt{tam - tam/2}); a intercalação
+lia \texttt{vetor[tam]} e não liberava o vetor auxiliar.
 
 \section{Metodologia}
 Atlântica, 2 nós exclusivos (2$\times$ Xeon E5520 2,27\,GHz: 8 núcleos
@@ -134,19 +128,18 @@ físicos / 16 hardware threads por nó), gcc 9.4.0, Open MPI 4.1.1,
 chamada ao BS. Cada ponto é a mediana de 3 execuções; só o sequencial de
 $10^6$ (16,6\,min) roda uma vez, e $p=1$ só é medido para $10^4$ e $10^5$.
 $S = T_{seq}/T_p$ e $E = S/p$ contando \emph{todos} os processos; acima de
-32 processos (mais que as hardware threads) usamos $S/32$. Cada rank
-registra nível, pedaço recebido e ordenado e os tempos de BS, intercalação,
-envio e espera, coletados por \texttt{MPI\_Gather} fora da medição.
+32 processos (mais que as hardware threads) usamos $S/32$. A carga de cada
+rank (Tab.~4) é coletada por \texttt{MPI\_Gather} fora da medição.
 
 \section{Speed-up e eficiência}
-O sequencial leva 0,098\,s, 10,0\,s e 993,6\,s: cada $10\times$ em $N$
-custa $\approx 100\times$ no tempo, como esperado do $\Theta(n^2)$. Na
+O sequencial leva 0,098\,s, 10,0\,s e 993,6\,s ($\approx 100\times$ a cada
+$10\times$ em $N$). Na
 árvore clássica com $L$ folhas o ideal é $S = L^2$, e a medida chega perto
 até 15 processos: com $10^6$, $S = 3{,}98$; 15,5; 60,3 para $p = 3, 7, 15$
 ($L^2 = 4, 16, 64$), e $E$ sobe de 1,33 para 4,02 (Tab.~1, Fig.~1). Com
 $p=31$ ($L^2=256$) o ganho é só 146 ($E = 4{,}70$). As 16 folhas disputam os
 16 núcleos físicos com os 15 nós internos, que esperam em \emph{polling}
-ativo no \texttt{Recv} (padrão do Open MPI). Por isso cada folha ordena em
+ativo no \texttt{Recv}. Por isso cada folha ordena em
 5,7\,s em média, contra 3,9\,s se tivesse um núcleo só para ela.
 Com $N=10^4$ o BS some diante do custo fixo (cerca de 10\,ms de
 lançamento e comunicação), e $E$ cai de 1,17 ($p=3$) para 0,32 ($p=31$).
@@ -155,8 +148,7 @@ lançamento e comunicação), e $E$ cai de 1,17 ($p=3$) para 0,32 ($p=31$).
 Na clássica com $p=15$ e $10^6$, os 7 nós internos ficam 0\% ocupados:
 esperam os filhos por 17--18\,s e intercalam em 5\,ms, porque a intercalação
 é $O(n)$ e o BS é $O(n^2)$. As 8 folhas ocupam 92\% do tempo, com
-desbalanceamento (máx./média do BS) de 1,08 (Tab.~4, Fig.~2). Assim, só
-$(p{+}1)/2$ processos ordenam. Na árvore do artigo com $p=16$, todos
+desbalanceamento (máx./média do BS) de 1,08 (Tab.~4, Fig.~2). Na árvore do artigo com $p=16$, todos
 ordenam 62.500 elementos (4,1\,s) e ficam 83\% ocupados. Com $p=15$, o
 rank 7 não tem ajudante ($7+8=15$) e fica com 125.000: 16,3\,s, enquanto os
 demais terminam em 4,1\,s e passam 75\% do tempo esperando por ele
@@ -170,8 +162,7 @@ $3{,}4\times$ na do artigo (Tab.~3, Fig.~4). A maior parte desse ganho vem da
 isolar o HT, comparamos os mesmos 31 processos nas 16 threads de cada nó e
 presos só aos 8 núcleos físicos (\texttt{taskset}). O HT dá $1{,}18\times$
 na clássica e $1{,}05\times$ na do artigo, onde o rank com o pedaço duplo
-termina sozinho depois que os outros liberam a CPU. Com $10^4$ e $10^5$ as
-diferenças ($<$20\,ms) se confundem com o ruído.
+termina sozinho. Com $10^4$ e $10^5$ a diferença fica no ruído ($<$20\,ms).
 
 \section{Mecanismos de balanceamento}
 \emph{Pedaços iguais.} Na árvore do artigo todos ordenam, e com $p=2^k$ o
@@ -182,9 +173,8 @@ nas duas árvores (16,3 $\times$ 16,5\,s), e $p=7$ o mesmo que $p=4$. Com
 $p=31$ o artigo vence (4,8 $\times$ 6,8\,s) porque o rank mais carregado
 segue quase sozinho no núcleo depois de 1,6\,s. Com um processo a mais
 ($p=16$, 32), o artigo é $4\times$ mais rápido que a clássica.
-\emph{Excesso de processos.} Acima de 32 processos usamos
-\texttt{mpi\_yield\_when\_idle}: o nó interno bloqueado cede o núcleo às
-folhas, que podem ser muito mais numerosas que as threads.
+\emph{Excesso de processos.} Acima de 32, com
+\texttt{mpi\_yield\_when\_idle}, o nó interno bloqueado cede o núcleo às folhas.
 
 \section{Mais processos (63 a 1023)}
 Cada vez que as folhas dobram, o trabalho total cai pela metade, mas
@@ -197,11 +187,10 @@ artigo ($S=2724$). Com 1023 os dois pioram: cada um dos 2 nós roda
 $\approx 512$ processos em 16 threads.
 
 \section{Conclusão}
-O speed-up superlinear vem do algoritmo: dividir o vetor corta o trabalho
-quadrático. Na clássica metade dos processos fica parada; a do artigo põe
-todos para ordenar e é $4\times$ mais rápida com $p=2^k$, mas com $p=2^k{-}1$
-concentra o dobro do pedaço em um rank e perde a vantagem. Com $N$ grande,
-processos muito além das threads ainda compensam (até 511 com $10^6$).
+O speed-up superlinear vem do algoritmo: dividir corta o trabalho
+quadrático. A árvore do artigo, em que todos ordenam, é $4\times$ mais
+rápida com $p=2^k$, mas perde a vantagem com $p=2^k{-}1$. Com $N$ grande,
+processos além das threads compensam (até 511 com $10^6$).
 
 % ============================ ANEXO (pag. 2) ================================
 \onecolumn
@@ -252,6 +241,7 @@ versão & $p$ & nível & ranks & recebido & ordenado & BS & intercala & espera &
 \end{tabular}
 
 \vspace{6pt}
+\begin{minipage}{\linewidth}\centering % titulo e tabela na mesma pagina
 \textbf{Tabela 5.} Excesso de processos (eficiência sobre as 32 hardware threads).\\[2pt]
 \begin{tabular}{rr rrr rrr}
 \toprule
@@ -261,6 +251,7 @@ $N$ & $p$ & tempo & $S$ & $S/32$ & tempo & $S$ & $S/32$\\
 \linhas{tab_muitos}{\pend{pendente} & & & & & & & \\}
 \bottomrule
 \end{tabular}
+\end{minipage}
 \end{center}
 
 \begin{center}
