@@ -125,42 +125,88 @@ leva \texttt{tam - tam/2}); a rotina de intercalação lia \texttt{vetor[tam]}
 (o teste de limite vinha depois da leitura) e não liberava o vetor auxiliar.
 
 \section{Metodologia}
-Atlântica, 2 nós exclusivos (\pend{modelo da CPU}, 8 núcleos físicos / 16
-hardware threads cada), \pend{versão gcc/Open MPI}, \texttt{-O2}. Ranks em
+Atlântica, 2 nós exclusivos (2$\times$ Xeon E5520 2,27\,GHz: 8 núcleos
+físicos / 16 hardware threads por nó), gcc 9.4.0, Open MPI 4.1.1,
+\texttt{-O2}. Ranks em
 \emph{round-robin} entre os nós. Tempo: na raiz, do \texttt{MPI\_Barrier}
 (depois de gerar o vetor) ao fim da última intercalação; no sequencial, só a
-chamada ao BS. Cada ponto é a mediana de 3 execuções; execuções acima de
-10 min (sequencial de $10^6$, $p \le 3$) rodam uma vez.
+chamada ao BS. Cada ponto é a mediana de 3 execuções; só o sequencial de
+$10^6$ (16,6\,min) roda uma vez, e $p=1$ só é medido para $10^4$ e $10^5$.
 $S = T_{seq}/T_p$ e $E = S/p$ contando \emph{todos} os processos; acima de
 32 processos (mais que as hardware threads) usamos $S/32$. Cada rank
 registra nível, pedaço recebido e ordenado e os tempos de BS, intercalação,
 envio e espera, coletados por \texttt{MPI\_Gather} fora da medição.
 
 \section{Speed-up e eficiência}
-\pend{Tabela 1 / Fig. 1: sequencial e S,E para p = 1, 3, 7, 15, 31. Comentar o
-superlinear (N²/L) e por que E cai de 15 para 31.}
+O sequencial leva 0,098\,s, 10,0\,s e 993,6\,s: cada $10\times$ em $N$
+custa $\approx 100\times$ no tempo, como esperado do $\Theta(n^2)$. Na
+árvore clássica com $L$ folhas o ideal é $S = L^2$, e a medida chega perto
+até 15 processos: com $10^6$, $S = 3{,}98$; 15,5; 60,3 para $p = 3, 7, 15$
+($L^2 = 4, 16, 64$), e $E$ sobe de 1,33 para 4,02 (Tab.~1, Fig.~1). Com
+$p=31$ ($L^2=256$) o ganho é só 146 ($E = 4{,}70$). As 16 folhas disputam os
+16 núcleos físicos com os 15 nós internos, que esperam em \emph{polling}
+ativo no \texttt{Recv} (padrão do Open MPI). Por isso cada folha ordena em
+5,7\,s em média, contra 3,9\,s se tivesse um núcleo só para ela.
+Com $N=10^4$ o BS some diante do custo fixo (cerca de 10\,ms de
+lançamento e comunicação), e $E$ cai de 1,17 ($p=3$) para 0,32 ($p=31$).
 
 \section{Balanceamento nos níveis da árvore}
-\pend{Fig. 2 / Tabela 4: na clássica os níveis internos ficam quase 100\%
-esperando; só as folhas trabalham, então com p processos só (p+1)/2 núcleos
-ordenam. Comparar a ocupação por nível nas duas árvores.}
+Na clássica com $p=15$ e $10^6$, os 7 nós internos ficam 0\% ocupados:
+esperam os filhos por 17--18\,s e intercalam em 5\,ms, porque a intercalação
+é $O(n)$ e o BS é $O(n^2)$. As 8 folhas ocupam 92\% do tempo, com
+desbalanceamento (máx./média do BS) de 1,08 (Tab.~4, Fig.~2). Assim, só
+$(p{+}1)/2$ processos ordenam. Na árvore do artigo com $p=16$, todos
+ordenam 62.500 elementos (4,1\,s) e ficam 83\% ocupados. Com $p=15$, o
+rank 7 não tem ajudante ($7+8=15$) e fica com 125.000: 16,3\,s, enquanto os
+demais terminam em 4,1\,s e passam 75\% do tempo esperando por ele
+(desbalanceamento 3,3). Em \emph{envio} entra a espera do \texttt{MPI\_Send}
+até o destino chamar o \texttt{Recv}: um rank que devolve seu pedaço espera
+o pai terminar de ordenar.
 
 \section{Ganho com HT}
-\pend{Tabela 3 / Fig. 4: 15→31 mistura dois efeitos (árvore com o dobro de
-folhas, trabalho total /2, e HT). O par 31 com HT × 31 só em núcleos físicos
-isola o HT: mesma árvore, mesmo trabalho.}
+De 15 para 31 processos com $10^6$, o tempo cai $2{,}4\times$ na clássica e
+$3{,}4\times$ na do artigo (Tab.~3, Fig.~4). A maior parte desse ganho vem da
+árvore, não do HT: dobrar as folhas corta o trabalho total pela metade. Para
+isolar o HT, comparamos os mesmos 31 processos nas 16 threads de cada nó e
+presos só aos 8 núcleos físicos (\texttt{taskset}). O HT dá $1{,}18\times$
+na clássica e $1{,}05\times$ na do artigo. Na do artigo, o tempo é ditado
+pelo rank que ordena o pedaço duplo, e ele termina sozinho depois que os
+outros liberam a CPU. Com $10^4$ e $10^5$ as diferenças ficam abaixo de
+20\,ms e se confundem com o ruído.
 
 \section{Mecanismos de balanceamento}
-\pend{Artigo × clássica com o mesmo p; artigo com 2\textasciicircum k
-(Tabela 2). Excesso de processos: os nós internos bloqueados liberam o
-núcleo para as folhas.}
+\emph{Pedaços iguais.} Na árvore do artigo todo processo ordena, então com
+$p=2^k$ o ideal é $S=p^2$: com $10^6$, $S = 62$ e 240 para $p = 8$ e 16 (64
+e 256) e 598 para $p=32$, onde o HT volta a pesar (Tab.~2). Com o mesmo
+$p=2^k{-}1$, porém, o caminho crítico é um pedaço de $N/2^{k-1}$, igual ao
+da folha clássica. Por isso $p=15$ dá o mesmo tempo nas duas árvores
+(16,3 $\times$ 16,5\,s), e o artigo com $p=7$ leva o mesmo que com $p=4$. Com
+$p=31$ o artigo vence (4,8 $\times$ 6,8\,s) com o mesmo pedaço crítico: os outros
+ranks terminam em 1,6\,s, e o mais carregado segue quase sozinho no núcleo. Com um processo a mais ($p=16$, $p=32$), o artigo
+fica $4\times$ mais rápido que a clássica.
+\emph{Excesso de processos.} Acima de 32 processos usamos
+\texttt{mpi\_yield\_when\_idle}: o nó interno bloqueado no \texttt{Recv}
+cede o núcleo às folhas, que podem então ser muito mais numerosas que as
+threads.
 
 \section{Mais processos (63 a 1023)}
-\pend{Fig. 3 / Tabela 5: até onde o ganho quadrático compensa a comunicação
-e a disputa por CPU; diferença entre N pequeno e grande.}
+Cada vez que as folhas dobram, o trabalho total cai pela metade, mas
+crescem o lançamento, os níveis de comunicação e a disputa por CPU
+(Tab.~5, Fig.~3). O ponto ótimo cresce com $N$. Com $10^4$ o melhor é
+$p \approx 31$, e 1023 processos ficam mais lentos que o sequencial na
+clássica. Com $10^5$ o melhor é $p=127$ ($S=222$ e 545). Com $10^6$ o
+melhor é $p=511$: 0,67\,s na clássica ($S=1483$, $S/32=46$) e 0,36\,s no
+artigo ($S=2724$). Com 1023 os dois pioram: cada um dos 2 nós roda
+$\approx 512$ processos em 16 threads.
 
 \section{Conclusão}
-\pend{3--4 frases.}
+O BS paraleliza de forma superlinear por um efeito do algoritmo, não do
+paralelismo: dividir o vetor corta o trabalho quadrático. Na árvore clássica
+só as folhas trabalham, e metade dos processos fica parada. A árvore do
+artigo põe todos para ordenar e é $4\times$ mais rápida com $p=2^k$, mas com
+$p=2^k{-}1$ concentra o dobro do pedaço em um rank e perde a vantagem. Com
+$N$ grande, criar processos muito além das hardware threads ainda compensa
+(até 511 com $10^6$). Com $N$ pequeno, não compensa.
 
 % ============================ ANEXO (pag. 2) ================================
 \onecolumn
