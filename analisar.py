@@ -205,9 +205,10 @@ def main():
                     print(f"  {l['nivel']:5d} {l['ranks']:5d} {l['recebido']:8.0f} {l['conquistado']:9.0f} "
                           f"{l['bs_med']:9.3f} {l['bs_max']:9.3f} {l['intercala']:10.4f} "
                           f"{l['espera']:9.3f} {100 * l['ocupacao']:8.1f}%")
-                    if p in (15, 16):
+                    # so o maior N (o da Fig. 2): os outros repetem o padrao
+                    if p in (15, 16) and n == max(dados):
                         tex_carga.append(
-                            f"{n} & {v} & {p} & {l['nivel']} & {l['ranks']} & "
+                            f"{v} & {p} & {l['nivel']} & {l['ranks']} & "
                             f"{l['recebido']:.0f} & {l['conquistado']:.0f} & {fmt(l['bs_med'], 3)} & "
                             f"{fmt(l['intercala'], 3)} & {fmt(l['espera'], 3)} & "
                             f"{fmt(100 * l['ocupacao'], 1)}\\% \\\\")
