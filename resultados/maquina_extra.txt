@@ -1,0 +1,7 @@
+nos: atlantica[08-09]
+CPU(s):                          16
+Thread(s) per core:              2
+Core(s) per socket:              4
+Socket(s):                       2
+Model name:                      Intel(R) Xeon(R) CPU           E5520  @ 2.27GHz
+mpirun (Open MPI) 4.1.1
