@@ -2,11 +2,12 @@
 %  Relatorio Tecnico - Trabalho 3 de Programacao Paralela (MPI divisao e conquista)
 %  Formato exigido:
 %    pag. 1  -> coluna DUPLA, margens 1cm, fonte 10, somente texto
-%    pag. 2  -> coluna SIMPLES: tabelas + graficos (anexo)
+%    pag. 2+ -> coluna SIMPLES: tabelas + graficos (anexo A)
 %    pag. 3+ -> coluna SIMPLES: codigo fonte
 %  Compilar a partir de relatorio/ (usa ../resultados/ e ../ para os fontes):
 %    tectonic relatorio.tex    ou    pdflatex relatorio.tex
-%  \pend{...} marca em VERMELHO o que depende das medicoes no cluster.
+%  \pend{...} marca em VERMELHO o que falta: numeros do job-extra.sh e as
+%  secoes que o grupo escreve (6 a 9 e 11; ver comentarios em cada uma).
 %  Antes de entregar: grep pend relatorio.tex deve voltar so a definicao.
 %  Os numeros saem de resultados/tabelas.txt (python3 analisar.py).
 % ============================================================================
@@ -24,6 +25,9 @@
 \usepackage{listings}
 \usepackage{xcolor}
 \usepackage{catchfile}
+\usepackage{amsmath}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
 
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{2pt}
@@ -39,6 +43,8 @@
 \makeatother
 
 \newcommand{\pend}[1]{\textcolor{red}{\textbf{[#1]}}}
+\newcommand{\Sdiv}{S_{\mathrm{div}}}
+\newcommand{\Ediv}{E_{\mathrm{div}}}
 
 % Inclui o grafico se ja existir; senao deixa um aviso no lugar.
 \newcommand{\grafico}[2][\linewidth]{\IfFileExists{../resultados/#2.pdf}%
@@ -51,6 +57,7 @@
 \newcommand{\carrega}[1]{\IfFileExists{../resultados/#1.tex}%
   {\expandafter\CatchFileDef\csname #1\endcsname{../resultados/#1.tex}{}}{}}
 \carrega{tab_escala}\carrega{tab_2k}\carrega{tab_muitos}\carrega{tab_ht}\carrega{tab_carga}
+\carrega{tab_espera}\carrega{tab_fraca}\carrega{tab_comparacao}
 \newcommand{\linhas}[2]{\ifcsname #1\endcsname\csname #1\endcsname\else #2\fi}
 
 \lstdefinestyle{codigoC}{
@@ -77,160 +84,215 @@
 }]
 
 % ============================ TEXTO (pag. 1) =================================
+% Titulos com as palavras da rubrica. Secoes 1-5 e 10: redigidas com o Claude
+% Code (ver secao 10). Secoes 6-9 e 11: escritas pelo grupo; cada uma traz,
+% em comentario, o item da rubrica que atende e onde estao os numeros.
 \section{Problema}
-Ordenar $N$ inteiros com bubble sort (BS) em MPI por \emph{divisão e
-conquista}: numa árvore binária de processos, cada nó \emph{conquista}
-(ordena, se o pedaço tem até $\delta$ elementos) ou \emph{divide} (manda as
-metades aos filhos e intercala o que volta). Entrada: pior caso
-($N, \dots, 1$), $N \in \{10^4, 10^5, 10^6\}$; a raiz confere se o
-resultado é $1, \dots, N$.
+Ordenar $N$ inteiros com bubble sort (BS) em MPI, por divisão e conquista
+numa árvore binária de processos; entrada no pior caso ($N, \dots, 1$),
+$N \in \{10^4, 10^5, 10^6\}$, e a raiz confere o resultado. Como o BS é
+$\Theta(n^2)$, $L$ pedaços de $N/L$ somam $N^2/L$: dividir já corta
+trabalho, e $S > p$ é esperado.
 
-Como o BS custa $\Theta(n^2)$, dividir reduz o \emph{trabalho total}: com
-$L$ folhas de $N/L$ elementos, a soma cai para $N^2/L$. Por isso o speed-up
-pode passar de $p$ (superlinear) sem erro de medição.
+\section{Implementação: mensagens e condição de parada}
+Um fonte (\texttt{bs.c}) gera o sequencial e o paralelo
+(\texttt{-DPARALELO}); \texttt{-v} escolhe a árvore. Ambas usam o mesmo BS e
+a mesma intercalação e trocam $2(p{-}1)$ mensagens bloqueantes: cada rank,
+exceto a raiz, recebe um pedaço (tamanho via \texttt{MPI\_Probe} +
+\texttt{MPI\_Get\_count}) e o devolve ordenado. Não há mensagem de término:
+cada rank sai após devolver o seu, e o programa acaba na última intercalação
+da raiz (Fig.~2).
 
-\section{Implementação}
-Um único fonte (\texttt{bs.c}) gera o sequencial (\texttt{gcc}) e o paralelo
-(\texttt{mpicc -DPARALELO}), com duas árvores escolhidas por \texttt{-v}:
+\textbf{Árvore clássica (sem balanceamento).} Filhos de $r$: $2r{+}1$ e
+$2r{+}2$. \emph{Parada}: com $\mathit{tam} \le \delta$ o rank ordena e
+devolve ao pai; senão envia as metades aos filhos, recebe-as de volta,
+intercala e devolve. Com $p = 2^k{-}1$ e $\delta = \lceil N/L \rceil$,
+$L = (p{+}1)/2$ folhas, a divisão para exatamente no último nível. Os nós
+internos só dividem e intercalam ($O(n)$): ficam quase sempre bloqueados.
 
-\textbf{Árvore clássica} (pseudocódigo do enunciado). Numeração de heap:
-filhos de $r$ são $2r{+}1$ e $2r{+}2$, pai é $\lfloor (r{-}1)/2 \rfloor$. O
-filho descobre o tamanho com \texttt{MPI\_Probe} + \texttt{MPI\_Get\_count};
-envios e recepções são bloqueantes. Os nós internos só dividem e
-intercalam; apenas as folhas ordenam. Com $p = 2^k{-}1$ processos há
-$L=(p{+}1)/2$ folhas, e $\delta = \lceil N/L \rceil$ faz a árvore usar
-exatamente os $p$ processos (com outro $\delta$ o programa aborta, em vez de
-deixar ranks esperando para sempre).
-
-\textbf{Árvore do artigo} (Radenski, PDPTA'11). Cada processo fica com a
-metade inicial e envia a final ao ajudante $r + 2^{\textit{nível}}$,
-até não haver mais ajudante, e então ordena o que sobrou: todos ordenam,
-inclusive os internos. O original usa mergesort; usamos o \emph{mesmo} BS,
-intercalação e entrada da clássica, para comparar só o balanceamento.
-Com $p = 2^k$ todos os pedaços são iguais; com $p=2^k{-}1$ um rank fica com
-o dobro (4$\times$ o trabalho, pelo custo quadrático).
-
-\textbf{Envio bloqueante, não \texttt{MPI\_Isend}.} O artigo envia a metade
-com \texttt{MPI\_Isend}, mas o Open MPI só transfere mensagens grandes
-quando o remetente volta a chamar o MPI, e o BS não chama: os dois ordenavam
-em série (0,202\,s no ensaio com $p=2$, contra $\approx$0,10\,s esperados).
-
-\textbf{Correções no material dado.} O pseudocódigo perdia um elemento com
-tamanho ímpar (a direita agora leva \texttt{tam - tam/2}); a intercalação
-lia \texttt{vetor[tam]} e não liberava o vetor auxiliar.
+\textbf{Árvore do artigo (com balanceamento).} Radenski (PDPTA'11). O rank
+$r$ entra no nível $\ell = \lfloor \log_2 r \rfloor + 1$ (raiz: 0) e, a cada
+nível, fica com a metade inicial e envia a final ao ajudante $r + 2^{\ell}$,
+que a espera com \texttt{MPI\_Probe(MPI\_ANY\_SOURCE)} e adota o remetente
+como pai. \emph{Parada}: se $r + 2^{\ell} \ge p$, ordena o que tem; na volta,
+recebe de cada ajudante (do último ao primeiro), intercala e devolve ao pai.
+Todos ordenam: com $p = 2^k$, pedaços iguais; com $2^k{-}1$, o rank
+$2^{k-1}{-}1$ fica com o dobro (4$\times$ o trabalho). Usamos o BS (o
+original usa mergesort) e \texttt{MPI\_Send} em vez de \texttt{MPI\_Isend}: o
+Open MPI só transfere mensagens grandes quando o remetente volta ao MPI, e pai
+e ajudante ordenavam em série.
 
 \section{Metodologia}
-Atlântica, 2 nós exclusivos (2$\times$ Xeon E5520 2,27\,GHz: 8 núcleos
-físicos / 16 hardware threads por nó), gcc 9.4.0, Open MPI 4.1.1,
-\texttt{-O2}. Ranks em
-\emph{round-robin} entre os nós. Tempo: na raiz, do \texttt{MPI\_Barrier}
-(depois de gerar o vetor) ao fim da última intercalação; no sequencial, só a
-chamada ao BS. Cada ponto é a mediana de 3 execuções; só o sequencial de
-$10^6$ (16,6\,min) roda uma vez, e $p=1$ só é medido para $10^4$ e $10^5$.
-$S = T_{seq}/T_p$ e $E = S/p$ contando \emph{todos} os processos; acima de
-32 processos (mais que as hardware threads) usamos $S/32$. A carga de cada
-rank (Tab.~4) é coletada por \texttt{MPI\_Gather} fora da medição.
+Atlântica, 2 nós exclusivos (2$\times$ Xeon E5520: 8 núcleos físicos / 16
+hardware threads por nó), gcc 9.4.0 \texttt{-O2}, Open MPI 4.1.1. Ranks em
+round-robin: até 8 por nó, um por núcleo; até 16, um por hardware thread
+(HT); acima, sem fixação e com \texttt{mpi\_yield\_when\_idle}. Tempo na
+raiz, do \texttt{MPI\_Barrier} à última intercalação; mediana de 3. Os
+16,6\,min do sequencial de $10^6$, contra 74\,min no enunciado, vêm do
+\texttt{-O2} (sem ele, 4,3$\times$ mais lento num teste local).
+$S = T_{seq}/T_p$; $E = S/p$ com todos os processos ($S/32$ acima de
+32); e $\Sdiv = \sum T_{seq}(\text{pedaço}) / T_p$, o speed-up sobre o
+sequencial que ordena \emph{os mesmos pedaços}, sem o ganho de dividir (ideal
+$p$; $\Ediv = \Sdiv/p$).
 
-\section{Speed-up e eficiência}
-O sequencial leva 0,098\,s, 10,0\,s e 993,6\,s ($\approx 100\times$ a cada
-$10\times$ em $N$). Na
-árvore clássica com $L$ folhas o ideal é $S = L^2$, e a medida chega perto
-até 15 processos: com $10^6$, $S = 3{,}98$; 15,5; 60,3 para $p = 3, 7, 15$
-($L^2 = 4, 16, 64$), e $E$ sobe de 1,33 para 4,02 (Tab.~1, Fig.~1). Com
-$p=31$ ($L^2=256$) o ganho é só 146 ($E = 4{,}70$). As 16 folhas disputam os
-16 núcleos físicos com os 15 nós internos, que esperam em \emph{polling}
-ativo no \texttt{Recv}. Por isso cada folha ordena em
-5,7\,s em média, contra 3,9\,s se tivesse um núcleo só para ela.
-Com $N=10^4$ o BS some diante do custo fixo (cerca de 10\,ms de
-lançamento e comunicação), e $E$ cai de 1,17 ($p=3$) para 0,32 ($p=31$).
+\section{Escalabilidade forte}
+O sequencial leva 0,098\,s, 10,0\,s e 993,6\,s. Na clássica com $L$ folhas o
+ideal é $S = L^2$ (um $L$ do paralelismo, outro da divisão); com $10^6$ a
+medida chega perto até $p = 15$ ($S = 3{,}98$; 15,5; 60,3 para $L^2 = 4$, 16,
+64; Tab.~1, Fig.~1). Descontada a divisão, \pend{$\Sdiv$ da clássica $p=15$
+e do artigo $p=16$}. Com $10^4$ o custo fixo ($\approx$10\,ms) domina: $E$
+cai de 1,17 ($p = 3$) a 0,32 ($p = 31$).
 
-\section{Balanceamento nos níveis da árvore}
-Na clássica com $p=15$ e $10^6$, os 7 nós internos ficam 0\% ocupados:
-esperam os filhos por 17--18\,s e intercalam em 5\,ms, porque a intercalação
-é $O(n)$ e o BS é $O(n^2)$. As 8 folhas ocupam 92\% do tempo, com
-desbalanceamento (máx./média do BS) de 1,08 (Tab.~4, Fig.~2). Na árvore do artigo com $p=16$, todos
-ordenam 62.500 elementos (4,1\,s) e ficam 83\% ocupados. Com $p=15$, o
-rank 7 não tem ajudante ($7+8=15$) e fica com 125.000: 16,3\,s, enquanto os
-demais terminam em 4,1\,s e passam 75\% do tempo esperando por ele
-(desbalanceamento 3,3). Na Fig.~2, \emph{envio} inclui esperar o pai
-terminar de ordenar para receber o pedaço de volta.
+\section{Desbalanceamento da árvore clássica}
+Com $p = 15$ e $10^6$, os 7 nós internos ficam 0\,\% ocupados (esperam
+17--18\,s, intercalam em 5\,ms) e as 8 folhas, 92\,\%, com pedaços iguais
+(máx./média do BS 1,08; Tab.~2, Fig.~3): \pend{$\Ediv$ da clássica $p=15$}.
+O problema não é a divisão, e sim os processos parados: só $(p{+}1)/2$
+ordenam. Saídas: mais processos que núcleos (Seç.~6) ou internos que também
+ordenam (Seç.~7).
 
-\section{Ganho com HT}
-De 15 para 31 processos com $10^6$, o tempo cai $2{,}4\times$ na clássica e
-$3{,}4\times$ na do artigo (Tab.~3, Fig.~4). A maior parte desse ganho vem da
-árvore, não do HT: dobrar as folhas corta o trabalho total pela metade. Para
-isolar o HT, comparamos os mesmos 31 processos nas 16 threads de cada nó e
-presos só aos 8 núcleos físicos (\texttt{taskset}). O HT dá $1{,}18\times$
-na clássica e $1{,}05\times$ na do artigo, onde o rank com o pedaço duplo
-termina sozinho. Com $10^4$ e $10^5$ a diferença fica no ruído ($<$20\,ms).
+% ---------------------------------------------------------------------------
+% SECOES 6 A 9 E 11: o grupo escreve (ver "Uso de IA"). Espaco: o que sobrar
+% da pagina 1 (compilar e conferir que o Anexo A ainda comeca na pag. 2).
+% ---------------------------------------------------------------------------
+\section{Mitigação sem alterar o código: aumento do número de processos}
+% Rubrica: "como podem ser mitigados ... sem alteração no código" e "desempenho
+% ... com balanceamento com aumento do número de processos".
+% Responder: o que muda de 15 para 31 processos na classica (16 folhas nos 16
+% nucleos fisicos)? Quanto disso e HT (Tab. 4)? Por que a espera dos nos
+% internos importa: polling (padrao do Open MPI) x yield, com e sem HT
+% (Tab. 5, Fig. 4: tempo total e BS medio de uma folha). Comparar com o
+% artigo p=16, que tem os mesmos 16 pedacos. E_div de cada caso (Tab. 8).
+\pend{Seção 6, a escrever pelo grupo}
 
-\section{Mecanismos de balanceamento}
-\emph{Pedaços iguais.} Na árvore do artigo todos ordenam, e com $p=2^k$ o
-ideal é $S=p^2$: com $10^6$, $S = 62$ e 240 para $p = 8$ e 16 (64 e 256) e
-598 para $p=32$, onde o HT pesa (Tab.~2). Com $p=2^k{-}1$ o caminho crítico
-é um pedaço de $N/2^{k-1}$, como na folha clássica: $p=15$ dá o mesmo tempo
-nas duas árvores (16,3 $\times$ 16,5\,s), e $p=7$ o mesmo que $p=4$. Com
-$p=31$ o artigo vence (4,8 $\times$ 6,8\,s) porque o rank mais carregado
-segue quase sozinho no núcleo depois de 1,6\,s. Com um processo a mais
-($p=16$, 32), o artigo é $4\times$ mais rápido que a clássica.
-\emph{Excesso de processos.} Acima de 32, com
-\texttt{mpi\_yield\_when\_idle}, o nó interno bloqueado cede o núcleo às folhas.
+\section{Mitigação com alteração do código: árvore do artigo}
+% Rubrica: "como podem ser mitigados ... com alteração no código (versão do
+% artigo)" e o desempenho dessa versão.
+% Responder: com 2^k todos ordenam pedacos iguais -> S ~ p^2, E_div perto de 1
+% (Tab. 3, Tab. 8). Com 2^k - 1 (15: rank 7 com 125.000) o caminho critico e
+% o pedaco dobrado: p=15 empata com a classica (16,3 x 16,5 s); p=7 ~ p=4
+% (Tab. 1). Carga por nivel do artigo p=15 e p=16 (Tab. 2, Fig. 3).
+\pend{Seção 7, a escrever pelo grupo}
 
-\section{Mais processos (63 a 1023)}
-Cada vez que as folhas dobram, o trabalho total cai pela metade, mas
-crescem o lançamento, os níveis de comunicação e a disputa por CPU
-(Tab.~5, Fig.~3). O ponto ótimo cresce com $N$. Com $10^4$ o melhor é
-$p \approx 31$, e 1023 processos ficam mais lentos que o sequencial na
-clássica. Com $10^5$ o melhor é $p=127$ ($S=222$ e 545). Com $10^6$ o
-melhor é $p=511$: 0,67\,s na clássica ($S=1483$, $S/32=46$) e 0,36\,s no
-artigo ($S=2724$). Com 1023 os dois pioram: cada um dos 2 nós roda
-$\approx 512$ processos em 16 threads.
+\section{63 a 1023 processos}
+% Rubrica: "executou as duas versoes com um numero grande de processos (63,
+% 127, 255, 512, 1023) e explicou o que aconteceu com o desempenho".
+% Responder: o otimo cresce com N (Tab. 6, Fig. 5); o que cresce junto com p
+% (lancamento, niveis de comunicacao, disputa por CPU: ~512 processos por no
+% em 16 threads com 1023); 63..1023 sao 2^k - 1, entao o artigo sempre tem um
+% rank com o pedaco dobrado, e com 64..1024 (2^k) isso some; a partir de 63
+% os ranks rodam sem fixacao e com yield (Metodologia).
+\pend{Seção 8, a escrever pelo grupo}
+
+\section{Escalabilidade forte × fraca}
+% Pedido do grupo: comparar as duas.
+% Forte = N fixo, p cresce (Seç. 4): o trabalho por processo cai ~ 1/L^2 e os
+% custos fixos dominam; por isso o otimo de p cresce com N (Seç. 8).
+% Fraca = n0 = 62.500 por processo ordenador, N = n0 x ordenadores (Tab. 7,
+% Fig. 6): o ideal e tempo constante. O que cresce com N: intercalacoes O(N)
+% na raiz, envio do vetor, e acima de 16 ordenadores o HT e a espera dos nos
+% internos. Por que o speed-up escalado de Gustafson nao vale direto com
+% custo quadratico (o sequencial de N cresce com N^2, nao com N).
+\pend{Seção 9, a escrever pelo grupo}
+
+\section{Uso de IA}
+% CONFERIR com o grupo antes de entregar: tem de descrever exatamente o que
+% foi feito pela ferramenta e o que foi feito por cada integrante.
+Usamos o \textbf{Claude Code} (Anthropic, modelo Claude Opus 5.5).
+\emph{Código}: escreveu o \texttt{bs.c} a partir do pseudocódigo e das
+rotinas dadas, a instrumentação de carga e os scripts de medição, análise e
+gráficos, e propôs os experimentos complementares (escala fraca, polling
+$\times$ yield, $\Sdiv$), aprovados pelo grupo. \emph{Relatório}: redigiu as
+Seç.~1--5 e o Anexo A e revisou os números das Seç.~6--9 e 11, escritas pelo
+grupo, que também rodou os experimentos no cluster e conferiu resultados e
+texto.
 
 \section{Conclusão}
-O speed-up superlinear vem do algoritmo: dividir corta o trabalho
-quadrático. A árvore do artigo, em que todos ordenam, é $4\times$ mais
-rápida com $p=2^k$, mas perde a vantagem com $p=2^k{-}1$. Com $N$ grande,
-processos além das threads compensam (até 511 com $10^6$).
+% Rubrica: "avaliou como foi o desempenho da versao sem balanceamento, com
+% balanceamento com aumento do numero de processos e com alteracao do codigo".
+% Fechar com a comparacao das tres abordagens (Tab. 8).
+\pend{Conclusão, a escrever pelo grupo}
 
 % ============================ ANEXO (pag. 2) ================================
 \onecolumn
 \section*{\large Anexo A --- Tabelas e gráficos}
 {\small
 \begin{center}
-\textbf{Tabela 1.} Tempo (s), speed-up e eficiência por número de processos.\\[2pt]
-\begin{tabular}{rr rrr rrr}
+\textbf{Tabela 1.} Escalabilidade forte: tempo (s), speed-up $S$, eficiência
+$E = S/p$ e speed-up sobre a mesma divisão ($\Sdiv$, ideal $= p$; $\Ediv = \Sdiv/p$).\\[2pt]
+\begin{tabular}{rr rrrrr rrrrr}
 \toprule
- & & \multicolumn{3}{c}{árvore clássica} & \multicolumn{3}{c}{árvore do artigo}\\
-$N$ & $p$ & tempo & $S$ & $E$ & tempo & $S$ & $E$\\
+ & & \multicolumn{5}{c}{árvore clássica (sem balanceamento)} & \multicolumn{5}{c}{árvore do artigo (com balanceamento)}\\
+\cmidrule(lr){3-7}\cmidrule(lr){8-12}
+$N$ & $p$ & tempo & $S$ & $E$ & $\Sdiv$ & $\Ediv$ & tempo & $S$ & $E$ & $\Sdiv$ & $\Ediv$\\
 \midrule
-\linhas{tab_escala}{\pend{rodar analisar.py} & & & & & & & \\}
+\linhas{tab_escala}{\pend{rodar analisar.py} & & & & & & & & & & & \\}
 \bottomrule
 \end{tabular}
 
-\vspace{6pt}
-\begin{minipage}[t]{0.42\linewidth}\centering
-\textbf{Tabela 2.} Árvore do artigo com $2^k$ processos.\\[2pt]
-\begin{tabular}{rrrrr}
-\toprule
-$N$ & $p$ & tempo & $S$ & $E$\\
-\midrule
-\linhas{tab_2k}{\pend{pendente} & & & & \\}
-\bottomrule
-\end{tabular}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.56\linewidth}\centering
-\textbf{Tabela 3.} HT: tempos (s) e ganhos.\\[2pt]
-\begin{tabular}{rl rrr rrr}
-\toprule
-$N$ & versão & $T_{15}$ & $T_{31}$ & 15$\to$31 & HT & físicos & ganho\\
-\midrule
-\linhas{tab_ht}{\pend{pendente} & & & & & & & \\}
-\bottomrule
-\end{tabular}
-\end{minipage}
+\vspace{4pt}
+\grafico[0.78\linewidth]{grafico_escala}\\[2pt]
+\textbf{Figura 1.} Escalabilidade forte: speed-up e eficiência; a linha pontilhada é o ideal linear.
+\end{center}
 
-\vspace{6pt}
-\textbf{Tabela 4.} Carga média por nível, $N=10^6$ ($p=15$ e $16$): pedaço recebido e
+\newpage
+\begin{center}
+% Diagrama das mensagens: setas cheias = pedaco enviado (com o tamanho); cada
+% um volta ordenado pelo mesmo caminho, em sentido inverso.
+\begin{tikzpicture}[x=0.85cm, y=1.05cm, font=\scriptsize,
+    no/.style={circle, draw=black!60, minimum size=6.5mm, inner sep=0pt},
+    interno/.style={no, fill=black!10},
+    folha/.style={no, fill=blue!30},
+    ordena/.style={no, fill=orange!45},
+    passa/.style={no, draw=black!35, dashed, text=black!50},
+    envia/.style={-{Stealth[length=2mm]}, semithick},
+    fica/.style={densely dotted, black!45}]
+  % ---------------- arvore classica, p = 7
+  \node[anchor=west] at (-0.6, 0.85) {\textbf{Árvore clássica}, $p = 7$, $\delta = \lceil N/4 \rceil$};
+  \node[interno] (c0) at (3, 0) {r0};
+  \node[interno] (c1) at (1, -1.3) {r1};
+  \node[interno] (c2) at (5, -1.3) {r2};
+  \foreach \r/\x in {3/0, 4/2, 5/4, 6/6} \node[folha] (c\r) at (\x, -2.6) {r\r};
+  \draw[envia] (c0) -- node[above left=-1pt] {1: $N/2$} (c1);
+  \draw[envia] (c0) -- node[above right=-1pt] {2: $N/2$} (c2);
+  \draw[envia] (c1) -- node[left] {1: $N/4$} (c3);
+  \draw[envia] (c1) -- node[right] {2: $N/4$} (c4);
+  \draw[envia] (c2) -- node[left] {1: $N/4$} (c5);
+  \draw[envia] (c2) -- node[right] {2: $N/4$} (c6);
+  \node[align=left, anchor=north west] at (-0.6, -3.1)
+    {nó interno ($\mathit{tam} > \delta$): envia à esquerda (1) e à direita (2),\\
+     recebe nessa ordem, intercala e devolve ao pai\\
+     folha ($\mathit{tam} \le \delta$): ordena e devolve ao pai};
+  % ---------------- arvore do artigo, p = 8
+  \begin{scope}[xshift=8.6cm]
+  \node[anchor=west] at (-0.6, 0.85) {\textbf{Árvore do artigo}, $p = 8$};
+  \node[passa] (a00) at (3.5, 0) {r0};
+  \node[passa] (a10) at (1.5, -0.87) {r0};  \node[passa] (a11) at (5.5, -0.87) {r1};
+  \node[passa] (a20) at (0.5, -1.73) {r0};  \node[passa] (a22) at (2.5, -1.73) {r2};
+  \node[passa] (a21) at (4.5, -1.73) {r1};  \node[passa] (a23) at (6.5, -1.73) {r3};
+  \foreach \r [count=\i from 0] in {0,4,2,6,1,5,3,7} \node[ordena] (a3\r) at (\i, -2.6) {r\r};
+  \draw[fica] (a00) -- (a10);  \draw[envia] (a00) -- node[above right=-1pt] {$N/2$} (a11);
+  \draw[fica] (a10) -- (a20);  \draw[envia] (a10) -- node[above right=-2pt] {$N/4$} (a22);
+  \draw[fica] (a11) -- (a21);  \draw[envia] (a11) -- node[above right=-2pt] {$N/4$} (a23);
+  \foreach \r/\h in {0/4, 2/6, 1/5, 3/7} {
+    \draw[fica] (a2\r) -- (a3\r);
+    \draw[envia] (a2\r) -- node[right=-1pt, pos=0.45] {$N/8$} (a3\h);
+  }
+  \foreach \l/\y in {0/0, 1/-0.87, 2/-1.73, 3/-2.6} \node[black!60] at (7.7, \y) {$\ell = \l$};
+  \node[align=left, anchor=north west] at (-0.6, -3.1)
+    {em cada nível $\ell$: fica com a metade inicial (pontilhado) e envia a final\\
+     ao ajudante $r + 2^{\ell}$; parada: $r + 2^{\ell} \ge p$ $\Rightarrow$ ordena;\\
+     na volta recebe de cada ajudante (do último ao primeiro) e intercala};
+  \end{scope}
+\end{tikzpicture}\\[4pt]
+\textbf{Figura 2.} Mensagens nas duas árvores. Cada seta cheia é um pedaço
+enviado (com seu tamanho), que volta ordenado pelo mesmo caminho em sentido
+inverso: $2(p{-}1)$ mensagens. Na clássica só as folhas (azul) ordenam; no
+artigo, todos os processos (laranja; os círculos tracejados são os mesmos
+processos em níveis anteriores).
+
+\vspace{8pt}
+\textbf{Tabela 2.} Carga média por nível, $N=10^6$ ($p=15$ e $16$): pedaço recebido e
 ordenado, tempos (s) e ocupação (BS + intercalação sobre o tempo total).\\[2pt]
 \begin{tabular}{lrrr rrrrr r}
 \toprule
@@ -240,32 +302,100 @@ versão & $p$ & nível & ranks & recebido & ordenado & BS & intercala & espera &
 \bottomrule
 \end{tabular}
 
-\vspace{6pt}
-\begin{minipage}{\linewidth}\centering % titulo e tabela na mesma pagina
-\textbf{Tabela 5.} Excesso de processos (eficiência sobre as 32 hardware threads).\\[2pt]
-\begin{tabular}{rr rrr rrr}
+\vspace{4pt}
+\grafico[0.8\linewidth]{grafico_carga}\\[2pt]
+\textbf{Figura 3.} Ocupação de cada processo durante a ordenação ($N=10^6$).
+
+\vspace{8pt}
+\begin{minipage}[t]{0.40\linewidth}\centering
+\textbf{Tabela 3.} Árvore do artigo com $2^k$ processos.\\[2pt]
+\begin{tabular}{rrrrr}
 \toprule
- & & \multicolumn{3}{c}{árvore clássica} & \multicolumn{3}{c}{árvore do artigo}\\
-$N$ & $p$ & tempo & $S$ & $S/32$ & tempo & $S$ & $S/32$\\
+$N$ & $p$ & tempo & $S$ & $E$\\
 \midrule
-\linhas{tab_muitos}{\pend{pendente} & & & & & & & \\}
+\linhas{tab_2k}{\pend{pendente} & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.58\linewidth}\centering
+\textbf{Tabela 4.} HT: tempos (s) de 15 e 31 processos; os mesmos 31 com HT e
+só nos núcleos físicos.\\[2pt]
+\begin{tabular}{rl rrr rrr}
+\toprule
+$N$ & versão & $T_{15}$ & $T_{31}$ & 15$\to$31 & HT & físicos & ganho\\
+\midrule
+\linhas{tab_ht}{\pend{pendente} & & & & & & & \\}
 \bottomrule
 \end{tabular}
 \end{minipage}
-\end{center}
 
-\begin{center}
-\grafico[0.72\linewidth]{grafico_escala}\\[2pt]
-\textbf{Figura 1.} Speed-up e eficiência; a linha pontilhada é o ideal linear.
+\vspace{8pt}
+\begin{minipage}{\linewidth}\centering
+\textbf{Tabela 5.} Espera dos nós internos: clássica $p=31$ com HT ou só nos
+núcleos físicos, com polling (padrão do Open MPI) ou yield; o artigo $p=16$
+ordena os mesmos 16 pedaços. BS: tempo de um processo ordenador (média e máximo).\\[2pt]
+\begin{tabular}{rlr rrrr}
+\toprule
+$N$ & configuração & $p$ & tempo & BS méd. & BS máx. & $\Sdiv$\\
+\midrule
+\linhas{tab_espera}{\pend{job-extra.sh} & & & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}
 
-\grafico[0.8\linewidth]{grafico_carga}\\[2pt]
-\textbf{Figura 2.} Ocupação de cada processo durante a ordenação ($N=10^6$).
+\vspace{6pt}
+\grafico[0.8\linewidth]{grafico_espera}\\[2pt]
+\textbf{Figura 4.} Espera ativa (polling) $\times$ ceder a CPU (yield), com e sem HT.
 
+\vspace{8pt}
+\begin{minipage}{\linewidth}\centering % titulo e tabela na mesma pagina
+\textbf{Tabela 6.} Aumento do número de processos (eficiência sobre as 32 hardware threads).
+63 a 1023 são $2^k{-}1$; a última coluna é o artigo com $p{+}1 = 2^k$.\\[2pt]
+\begin{tabular}{rr rrr rrr rrr}
+\toprule
+ & & \multicolumn{3}{c}{árvore clássica} & \multicolumn{3}{c}{árvore do artigo} & \multicolumn{3}{c}{artigo, $p{+}1$ processos}\\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}\cmidrule(lr){9-11}
+$N$ & $p$ & tempo & $S$ & $S/32$ & tempo & $S$ & $S/32$ & tempo & $S$ & $S/32$\\
+\midrule
+\linhas{tab_muitos}{\pend{pendente} & & & & & & & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}
+
+\vspace{4pt}
 \grafico[0.8\linewidth]{grafico_muitos}\\[2pt]
-\textbf{Figura 3.} Speed-up com excesso de processos.
+\textbf{Figura 5.} Speed-up e eficiência de 1 a 1024 processos.
 
-\grafico[0.8\linewidth]{grafico_ht}\\[2pt]
-\textbf{Figura 4.} Ganho de 15 para 31 processos e ganho isolado do HT.
+\vspace{8pt}
+\begin{minipage}{\linewidth}\centering
+\textbf{Tabela 7.} Escalabilidade fraca: $n_0 = 62.500$ elementos por processo
+ordenador, $N = n_0 \times$ ordenadores. BS máx.: o processo ordenador mais
+lento; resto: distribuir, intercalar e devolver. $E_\text{fraca} = T_{seq}(n_0)/T$.\\[2pt]
+\begin{tabular}{lrrr rrrr}
+\toprule
+versão & $p$ & ordenadores & $N$ & tempo & BS máx. & resto & $E_\text{fraca}$\\
+\midrule
+\linhas{tab_fraca}{\pend{job-extra.sh} & & & & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}
+
+\vspace{4pt}
+\grafico[0.8\linewidth]{grafico_fraca}\\[2pt]
+\textbf{Figura 6.} Escalabilidade fraca: o ideal é tempo constante (eficiência 1).
+
+\vspace{8pt}
+\begin{minipage}{\linewidth}\centering
+\textbf{Tabela 8.} As três abordagens, $N = 10^6$: sem balanceamento, aumento do
+número de processos (sem alterar o código) e árvore do artigo (alterando o código).\\[2pt]
+\begin{tabular}{llrr rrrr}
+\toprule
+abordagem & configuração & $p$ & ordenadores & tempo & $S$ & $\Sdiv$ & $\Ediv$\\
+\midrule
+\linhas{tab_comparacao}{\pend{rodar analisar.py} & & & & & & & \\}
+\bottomrule
+\end{tabular}
+\end{minipage}
 \end{center}
 }
 
@@ -274,9 +404,13 @@ $N$ & $p$ & tempo & $S$ & $S/32$ & tempo & $S$ & $S/32$\\
 \section*{\large Anexo B --- Código fonte}
 \subsection*{bs.c}
 \lstinputlisting[style=codigoC]{../bs.c}
-\subsection*{medir.sh e job.sh}
+\subsection*{lancador.sh, medir.sh e job.sh}
+\lstinputlisting[style=codigoC,language=bash]{../lancador.sh}
 \lstinputlisting[style=codigoC,language=bash]{../medir.sh}
 \lstinputlisting[style=codigoC,language=bash]{../job.sh}
+\subsection*{extra.sh e job-extra.sh}
+\lstinputlisting[style=codigoC,language=bash]{../extra.sh}
+\lstinputlisting[style=codigoC,language=bash]{../job-extra.sh}
 \subsection*{analisar.py}
 \lstinputlisting[style=codigoC,language=Python]{../analisar.py}
 \subsection*{graficos.py}

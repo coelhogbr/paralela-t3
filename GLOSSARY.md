@@ -44,5 +44,21 @@ _Avoid_: limiar, threshold
 Bubble sort do vetor inteiro num único núcleo, sem MPI; é a base do speed-up.
 _Avoid_: versão com 1 processo
 
-**Balanceamento por excesso de processos**:
-Rodar mais processos que núcleos para que as folhas ocupem os núcleos deixados ociosos pelos nós internos bloqueados.
+**Processo ordenador**:
+Processo que conquista algum pedaço: só as folhas na árvore clássica; todos os processos na árvore do artigo.
+_Avoid_: trabalhador, worker
+
+**Balanceamento por aumento do número de processos**:
+Mitigação do desbalanceamento da árvore clássica sem alterar o código: rodar mais processos que núcleos físicos para que as folhas ocupem os núcleos que os nós internos, só esperando, deixariam ociosos.
+_Avoid_: balanceamento por excesso de processos
+
+**Speed-up sobre a mesma divisão** (S_div):
+Speed-up em relação a ordenar sequencialmente os mesmos pedaços que a execução paralela ordenou; tira do speed-up o ganho de dividir um algoritmo quadrático e deixa só o do paralelismo (ideal: p).
+_Avoid_: speed-up corrigido, speed-up real
+
+**Escalabilidade forte**:
+Como o tempo cai ao aumentar os processos com N fixo; medida pelo speed-up e pela eficiência em relação ao sequencial.
+
+**Escalabilidade fraca**:
+Como o tempo varia quando N cresce junto com os processos ordenadores, mantendo fixo o pedaço de cada um (n₀); o ideal é tempo constante.
+_Avoid_: speed-up escalado

@@ -11,7 +11,8 @@
 #   2. compilacao e corretude (make teste: varios np, N impar, abort com np=5);
 #   3. onde cai cada rank (2 nos, round-robin) e o modo "so nucleos fisicos";
 #   4. se o cluster consegue lancar 1023 processos em 2 nos;
-#   5. a bateria inteira do medir.sh com N pequeno e 1 repeticao.
+#   5. a bateria inteira do medir.sh com N pequeno e 1 repeticao;
+#   6. o extra.sh (job-extra.sh) tambem em miniatura.
 # Tem de terminar com "ENSAIO OK".
 #
 #   sbatch job-teste.sh ; cat slurm-teste-*.out
@@ -51,6 +52,12 @@ done
 
 echo "===== 5. bateria completa em miniatura"
 REPS=1 RES=resultados-teste ./medir.sh 20000
+python3 analisar.py resultados-teste > /dev/null && echo "analisar.py ok"
+rm -rf resultados-teste
+
+echo "===== 6. medicoes complementares (extra.sh) em miniatura"
+REPS=1 NS="4000 8000" NS_ESPERA="8000" PROCS_2K_MUITOS="64" N0=1000 \
+    RES=resultados-teste ./extra.sh
 python3 analisar.py resultados-teste > /dev/null && echo "analisar.py ok"
 rm -rf resultados-teste
 

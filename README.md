@@ -19,12 +19,15 @@ com `ok=1` se o resultado é exatamente `1..N`.
 |---|---|
 | `bs.c` | Fonte único: `gcc` → `bs_seq`, `mpicc -DPARALELO` → `bs_mpi`. `-n N -v arvore\|artigo -d delta -b carga.csv -m` |
 | `Makefile` | `make`; `make teste` confere `ok=1` com vários np, N ímpar, e que np=5 na árvore clássica aborta |
+| `lancador.sh` | Funções comuns (carregado pelos dois abaixo): detecção do processador, `lanca`, `lanca_modo`, mediana |
 | `medir.sh N` | Bateria de um tamanho → `resultados/{tempos,carga,ht}_N.csv` (mediana de 3) |
-| `analisar.py` | Tabelas: escala, 2^k, excesso de processos, HT, carga por nível. Gera `resultados/tab_*.tex` |
-| `graficos.py` | As 4 figuras do relatório (usa as contas do `analisar.py`) |
-| `job-teste.sh` | Ensaio de ~5 min: limites da partição, `make teste`, distribuição dos ranks, 1023 processos, bateria em miniatura |
+| `extra.sh` | Medições complementares → `espera_N`, `carga_espera_N`, `muitos2k_N`, `fraca`, `carga_fraca`, `seq_pedacos` |
+| `analisar.py` | Tabelas: escala forte (com S_div), 2^k, aumento do número de processos, HT, espera, carga por nível, escala fraca, três abordagens. Gera `resultados/tab_*.tex` |
+| `graficos.py` | As figuras do relatório (usa as contas do `analisar.py`; precisa de matplotlib) |
+| `job-teste.sh` | Ensaio de ~5 min: limites da partição, `make teste`, distribuição dos ranks, 1023 processos, `medir.sh` e `extra.sh` em miniatura |
 | `job.sh N` | 2 nós exclusivos: make + medir + analisar + gráficos |
-| `relatorio/relatorio.tex` | Relatório; `[...]` em vermelho = falta número do cluster |
+| `job-extra.sh` | 2 nós exclusivos: make + `extra.sh` (~40 min) |
+| `relatorio/relatorio.tex` | Relatório; `[...]` em vermelho = falta número do cluster ou seção do grupo |
 
 ## Rodar no cluster
 
@@ -46,7 +49,16 @@ squeue -u $USER ; tail -f slurm-*.out
 # 3) ao terminar os três, regerar as tabelas com todos os tamanhos e subir
 python3 analisar.py | tee resultados/tabelas.txt
 git add resultados && git commit -m "Add cluster measurements" && git push
+
+# 4) medições complementares (depois dos três: usa o sequencial de tempos_N.csv)
+sbatch job-teste.sh                         # o ensaio agora também roda o extra.sh
+sbatch job-extra.sh                         # ~40 min
+python3 analisar.py | tee resultados/tabelas.txt
+git add resultados && git commit -m "Add complementary measurements" && git push
 ```
+
+Depois, na máquina local (com matplotlib): `python3 graficos.py` e compilar
+o relatório (`cd relatorio && tectonic relatorio.tex`).
 
 Compile com `make` **antes** de submeter: os três jobs rodam `make` ao mesmo
 tempo e, com os binários já atualizados, isso não faz nada (sem corrida).
@@ -70,7 +82,12 @@ tempo e, com os binários já atualizados, isso não faz nada (sem corrida).
 | Artigo 2^k | p = 2, 4, 8, 16, 32 | a árvore do artigo com pedaços iguais |
 | Carga por nível | `-b` em toda execução | quanto cada nível ordena, intercala e espera |
 | HT | 15 × 31; e 31 com HT × 31 só em núcleos físicos | separar o efeito da árvore maior do efeito do HT |
-| Excesso de processos | p = 63 … 1023 | os nós internos ociosos liberam CPU às folhas — até quando compensa? |
+| Aumento do número de processos | p = 63 … 1023 (e 64 … 1024 no artigo) | os nós internos ociosos liberam CPU às folhas — até quando compensa? |
+| Espera (`extra.sh`) | clássica p = 31: {HT, só físicos} × {polling, yield}; artigo p = 16 | quanto a espera ativa dos nós internos tira das folhas |
+| Escala fraca (`extra.sh`) | n0 = 62.500 por processo ordenador, até 63/64 processos | o que cresce com N quando o trabalho por processo é fixo |
+| Sequencial por pedaço (`extra.sh`) | seq de N/2 … N/1024 | S_div: speed-up sobre o sequencial com a mesma divisão |
 
 `p` conta todos os processos, inclusive os nós internos, que na árvore
 clássica só esperam: `E = S/p`. Acima de 32 processos, `S/32` (hardware threads).
+`S_div = Σ T_seq(pedaço) / T_p` tira do speed-up o ganho algorítmico de dividir
+(ideal `S_div = p`); `E_fraca = T_seq(n0) / T(p, N)` (ideal 1).
